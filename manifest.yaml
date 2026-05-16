@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: answers
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: answers
+  template:
+    metadata:
+      labels:
+        app: answers
+    spec:
+      containers:
+        - name: answers
+          image: microsm/micro-answers:latest
+          imagePullPolicy: Always
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: answers-secrets
+                  key: database_url
+            - name: KAFKA_BOOTSTRAP
+              value: "answers-kafka-bootstrap.kafka:9092"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: SERVICE_NAME
+              value: "answers"
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: answers
+spec:
+  selector:
+    app: answers
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: ClusterIP
