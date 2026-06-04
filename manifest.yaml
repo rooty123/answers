@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: answers
-          image: microsm/micro-answers:latest
+          image: microsm/micro-answers:__IMAGE_TAG__
           imagePullPolicy: Always
           env:
             - name: DATABASE_URL

@@ -2,45 +2,82 @@ name: Build and Push Docker Image
 
 on: [push]
 
+permissions:
+  contents: read
+  id-token: write   # cosign keyless OIDC
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.push.outputs.digest }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build image (local for scan)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/micro-answers:scan
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKER_HUB_USERNAME }}/micro-answers:scan
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Compute tags
+        id: tags
+        run: |
+          IMAGE=${{ secrets.DOCKER_HUB_USERNAME }}/micro-answers
+          TAGS="${IMAGE}:${{ github.sha }},${IMAGE}:latest"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAGS="${TAGS},${IMAGE}:${{ github.ref_name }}"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Push image
+        id: push
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile
           push: true
-          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/micro-answers:latest
+          tags: ${{ steps.tags.outputs.tags }}
+
+      - uses: sigstore/cosign-installer@v3
+        if: startsWith(github.ref, 'refs/tags/v')
+
+      - name: Cosign sign release image (keyless)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cosign sign --yes \
+            ${{ secrets.DOCKER_HUB_USERNAME }}/micro-answers@${{ steps.push.outputs.digest }}
 
   deploy:
-    runs-on: self-hosted
-    container:
-      image: bitnami/kubectl:latest
-      options: --user 1001
+    runs-on: arc-answers
     needs: build
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           clean: false
           set-safe-directory: false
 
-      - name: Apply Manifest
-        run: kubectl apply -f manifest.yaml
+      - uses: azure/setup-kubectl@v4
 
-      - name: Restart Deployment
-        run: kubectl rollout restart deployment answers
+      - name: Substitute image tag and apply
+        run: |
+          sed -i "s|__IMAGE_TAG__|${{ github.sha }}|g" manifest.yaml
+          kubectl apply -n default -f manifest.yaml
