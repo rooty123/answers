@@ -40,16 +40,16 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: Run govulncheck
         run: govulncheck ./...
-      - name: Run Trivy fs
-        uses: aquasecurity/trivy-action@master
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@v0.2.0
         with:
-          scan-type: fs
-          scanners: vuln
-          severity: CRITICAL,HIGH
-          exit-code: '1'
-          ignore-unfixed: true
-          format: sarif
-          output: trivy.sarif
+          version: latest
+      - name: Trivy fs SARIF (all severities, report-only)
+        run: |
+          trivy fs --scanners vuln --format sarif --output trivy.sarif --exit-code 0 .
+      - name: Trivy fs gate (CRITICAL/HIGH, fixed only)
+        run: |
+          trivy fs --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 .
       - name: Upload Trivy SARIF artifact
         if: always()
         uses: actions/upload-artifact@v4
